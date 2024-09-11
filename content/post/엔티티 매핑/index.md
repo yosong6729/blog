@@ -1,5 +1,5 @@
 ---
-title: "엔티티 매핑"
+title: "[자바 ORM 표준 JPA 프로그래밍 - 기본편] 엔티티 매핑"
 date: 2024-09-10T21:26:15+09:00
 # weight: 1
 # aliases: ["/first"]
@@ -249,5 +249,135 @@ public class Member {
     private Long id;
 ```
 
-![callnext](../images/callnextvaluefor.png)
+![callnext](images/callnextvaluefor.png)
 
+identity와 다르게 em.persist()하는 시점에 데이터베이스 시퀀스를 이용하여 식별자를 조회(call next value for …)한다. 그리고 조회한 식별자를 엔티티에 할당한 후 엔티티 를 영속성 컨텍스트에 저장한다(Identity에서 되지 않는 버퍼링이 가능하다.). 이후 커밋시점에 데이터베이스에 저장한다.
+
+### SEQUENCE - @SequenceGenerator
+
+•주의: allocationSize 기본값 = 50
+
+|속성|설명|기본값|
+|-|-|-|
+|name|식별자 생성기 이름|필수|
+|sequenceName|데잍베이스에 등록되어 있는 시퀀스 이름|hibernate_sequence|
+|initialValue|DDL 생성 시에만 사용됨, 시퀀스 DDL을 생성할 때 처음 1시작하는 수를 지정한다.|1|
+|allocationSize|{{< rawhtml >}}시퀀스 한 번 호출에 증가하는 수(성능 최적화에 사용됨)<br>데이터베이스 시퀀스 값이 하나씩 증가하도록 설정되어 있으면 이 값을 반드시 1로 설정해야 한다{{< /rawhtml >}}|50|
+|catalog, schema|데이터베이스 catalog, schema 이름||
+
+### SEQUENCE 전략과 최적화
+
+SEQUENCE 전략은 데이터베이스 시퀀스를 통해 식별자를 조회하는 추가 작업이 필요하다. 따라서 데이터베이스와 2번 통신한다. 
+
+JPA가 시퀀스에 접근하는 횟수를 줄이기 위해서 allocationSize(기본값 50)를 사용한다.
+
+allicationSize에 설정한 값 만큼 한번에 시퀀스 값을 증가 시키고, 그만큼 memory에 시퀀스 값을 할당한다. 이후 memory를 활용해 JVM안에서 시퀀스를 할당한다.
+
+이 방법은 시퀀스 값을 선점하므로 여러 JVM이 동시에 동작해도 기본 키 값이 충돌하지 않는다는 장점이 있다.
+
+---
+
+### TABLE 전략
+
+- 키 생성 전용 테이블을 하나 만들어서 데이터베이스 시퀀스를 흉내내는 전략
+- 장점: 모든 데이터베이스에 적용 가능
+- 단점: 성능이 떨어진다.
+
+### TABLE 전략 - 매핑
+
+```sql
+create table MY_SEQUENCES ( 
+    sequence_name varchar(255) not null, 
+    next_val bigint, 
+    primary key ( sequence_name ) 
+)
+```
+
+```java
+@Entity  
+@TableGenerator( 
+        name = "MEMBER_SEQ_GENERATOR", 
+        table = "MY_SEQUENCES", 
+        pkColumnValue = "MEMBER_SEQ", allocationSize = 1) 
+public class Member { 
+@Id 
+@GeneratedValue(strategy = GenerationType.TABLE, 
+                   generator = "MEMBER_SEQ_GENERATOR") 
+    private Long id; 
+```
+
+### @TableGenerator - 속성
+
+|속성|설명|기본값|
+|-|-|-|
+|name|식별자 생성기 이름|필수|
+|table|키생성 테이블 명|hibernate_sequence|
+|pkColumnName|시퀀스 컬럼명|sequence_name|
+|valueColumnNa|시퀀스 값 컬럼명|next_val|
+|pkColumnValue|키로 사용할 값 이름|엔티티 이름|
+|initialValue|초기 값, 마지막으로 생성된 값이 기준이다.|0|
+| allocationSize |시퀀스 한 번 호출에 증가하는 수(성능 최적화에 사용됨)| 50
+|
+|catalog, schema|데이터베이스 catalog, schema 이름||
+|uniqueConstraints(DDL)|유니크 제약 조건을 지정할 수 있다.||
+
+---
+
+### 권장하는 식별자 전략
+
+- **기본 키 제약 조건**: null 아님, 유일, **변하면 안된다.**
+- 미래까지 이 조건을 만족하는 자연키(주민등록 번호 등)는 찾기 어렵다. 대리키(대체키)를 사용하자.
+- 예를 들어 주민등록번호도 기본 키로 적절하기 않다.
+- **권장: Long형(10억 넘어도 동작 가능) + 대체키 + 키 생성전략 사용**
+
+---
+
+## 실전 예제 - 1. 요구사항 분석과 기본 매핑
+
+### 요구사항 분석
+
+- 회원은 상품을 주문할 수 있다.
+- 주문 시 여러 종류의 상품을 선택할 수 있다.
+
+### 기능 목록
+
+- 회원 기능
+    - 회원등록
+    - 회원조회
+- 상품 기능
+    - 상품등록
+    - 상품수정
+    - 상품조회
+- 주문 기능
+    - 상품주문
+    - 주문내역조회
+    - 주문취소
+
+![image.png](images/기능%20목록.png)
+
+### 도메인 모델 분석
+
+- 회원과 주문의 관계: 회원은 여러 번 주문할 수 있다. (일대다)
+- 주문과 상품의 관계: 주문할 때 여러 상품을 선택할 수 있다. 반
+대로 같은 상품도 여러 번 주문될 수 있다. 주문상품 이라는 모델
+을 만들어서 다대다 관계를 일다대, 다대일 관계로 풀어냄
+
+![image.png](images/도메인%20모델%20분석.png)
+
+### 테이블 설계
+
+![image.png](images/테이블%20설계.png)
+
+### 엔티티 설계와 매핑
+
+![image.png](images/엔티티%20설계와%20매핑.png)
+
+> 위 실전예제의 코드를 확인하고 싶으면  [자바 ORM 표준 JPA 프로그래밍 - 기본편](https://www.inflearn.com/course/ORM-JPA-Basic)에서 확인하시면 됩니다.
+> 
+
+### 데이터 중심 설계의 문제점
+
+- 현재 방식은 객체 설계를 테이블 설계에 맞춘 방식
+- 테이블의 외래키를 객체에 그대로 가져옴
+- 객체 그래프 탐색이 불가능
+- 참조가 없으므로 UML도 잘못됨
